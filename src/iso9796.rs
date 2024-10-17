@@ -1,5 +1,3 @@
-use std::{borrow::Cow, marker::PhantomData};
-
 use eyre::ensure;
 use eyre::eyre;
 use eyre::OptionExt;
@@ -10,6 +8,7 @@ use rsa::{
     BigUint, RsaPrivateKey,
 };
 use sha1::Digest;
+use std::marker::PhantomData;
 
 use crate::hexslice::HexDisplay;
 use crate::pad::uint_to_be_pad;
@@ -19,11 +18,12 @@ use crate::pad::uint_to_be_pad;
 const TRAILER_IMPLICIT: u8 = 0xBC;
 
 #[derive(Debug, Clone)]
-pub struct ISO9796SigningKey<'k, D>
+pub struct ISO9796SigningKey<D, PRIV>
 where
     D: Digest,
+    PRIV: AsRef<RsaPrivateKey> + Clone,
 {
-    inner: Cow<'k, RsaPrivateKey>,
+    inner: PRIV,
     trailer: Trailer,
     block_len: u16,
     phantom: PhantomData<D>,
@@ -35,11 +35,15 @@ pub enum Trailer {
     Explicit(u16),
 }
 
-impl<'k, D: Digest> ISO9796SigningKey<'k, D> {
-    pub fn new(key: Cow<'k, RsaPrivateKey>, trailer: Trailer) -> ISO9796SigningKey<'k, D> {
+impl<D, PRIV> ISO9796SigningKey<D, PRIV>
+where
+    D: Digest,
+    PRIV: AsRef<RsaPrivateKey> + Clone,
+{
+    pub fn new(key: PRIV, trailer: Trailer) -> ISO9796SigningKey<D, PRIV> {
         use rsa::traits::PublicKeyParts;
 
-        let key_bits = key.n().bits();
+        let key_bits = key.as_ref().n().bits();
         let block_len = (key_bits + 7) / 8;
         ISO9796SigningKey {
             inner: key,
@@ -74,16 +78,16 @@ impl<'k, D: Digest> ISO9796SigningKey<'k, D> {
         };
         let key_bits = {
             use rsa::traits::PublicKeyParts;
-            self.inner.n().bits()
+            self.inner.as_ref().n().bits() as i32
         };
-        let bits = (dig_size + message.len()) * 8 + t + 4 - key_bits;
+        let bits = ((dig_size + message.len()) * 8 + t + 4) as i32 - key_bits;
 
         let is_full_message = bits > 0;
 
         let header = if is_full_message { 0x60 } else { 0x40 };
 
         let (delta, recoverable) = if is_full_message {
-            let mr = message.len() - ((bits + 7) / 8);
+            let mr = message.len() - ((bits + 7) / 8) as usize;
 
             let delta = delta - mr;
 
@@ -132,30 +136,30 @@ impl<'k, D: Digest> ISO9796SigningKey<'k, D> {
         to_encrypt.fill(0);
 
         use rsa::traits::PublicKeyParts;
-        let encrypted = uint_to_be_pad(encrypted, self.inner.size())?;
+        let encrypted = uint_to_be_pad(encrypted, self.inner.as_ref().size())?;
         Ok((recoverable, encrypted))
     }
 }
 
 #[derive(Clone)]
-pub struct ISO9796VerifyingKey<'k, D, PK>
+pub struct ISO9796VerifyingKey<D, PUB>
 where
     D: Digest,
-    PK: PublicKeyParts + Clone,
+    PUB: PublicKeyParts + Clone,
 {
-    inner: Cow<'k, PK>,
+    inner: PUB,
 
     trailer: Trailer,
     block_len: u16,
     phantom: PhantomData<D>,
 }
 
-impl<'k, D, PK> ISO9796VerifyingKey<'k, D, PK>
+impl<'k, D, PUB> ISO9796VerifyingKey<D, PUB>
 where
     D: Digest,
-    PK: PublicKeyParts + Clone,
+    PUB: PublicKeyParts + Clone,
 {
-    pub fn new(key: Cow<'k, PK>, trailer: Trailer) -> ISO9796VerifyingKey<'k, D, PK> {
+    pub fn new(key: PUB, trailer: Trailer) -> ISO9796VerifyingKey<D, PUB> {
         let key_bits = key.n().bits();
 
         let block_len = (key_bits + 7) / 8;
@@ -191,7 +195,7 @@ where
         let expected_block_len = self.block_len as usize;
         ensure!(signature.len() == expected_block_len);
 
-        let signature = rsa_encrypt(self.inner.as_ref(), &BigUint::from_bytes_be(&signature))?;
+        let signature = rsa_encrypt(&self.inner, &BigUint::from_bytes_be(&signature))?;
         let signature: Vec<u8> = signature.to_bytes_be();
 
         ensure!(signature.len() == expected_block_len);

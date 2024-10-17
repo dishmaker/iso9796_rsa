@@ -33,10 +33,7 @@ pub fn iso9796_create_signature_nonrecoverable<'a>(
 
     Ok((non_recoverable, signature_bytes))
 }
-```
 
-Verify:
-```rust
 
 pub fn iso9796_verify_signature<PK: PublicKeyParts + Clone>(
     public_key: &PK,
