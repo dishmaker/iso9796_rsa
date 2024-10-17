@@ -18,7 +18,8 @@ pub fn iso9796_create_signature_nonrecoverable<'a>(
 ) -> eyre::Result<(&'a [u8], Vec<u8>)> {
     let mut rng = rand::thread_rng();
 
-    let signing_key = ISO9796SigningKey::<Sha1>::new(Cow::Borrowed(private_key), Trailer::Implicit);
+    let signing_key =
+        ISO9796SigningKey::<Sha1, _>::new(Cow::Borrowed(private_key), Trailer::Implicit);
 
     let (recoverable, signature_bytes) = signing_key
         .generate_signature(Some(&mut rng), content)
@@ -34,20 +35,16 @@ pub fn iso9796_create_signature_nonrecoverable<'a>(
     Ok((non_recoverable, signature_bytes))
 }
 
-
 pub fn iso9796_verify_signature<PK: PublicKeyParts + Clone>(
-    public_key: &PK,
+    public_key: PK,
     signature: &[u8],
     unrecoverable: &[u8],
 ) -> eyre::Result<Vec<u8>> {
-    let signing_key =
-        ISO9796VerifyingKey::<Sha1, PK>::new(Cow::Borrowed(public_key), Trailer::Implicit);
+    let signing_key = ISO9796VerifyingKey::<Sha1, PK>::new(public_key, Trailer::Implicit);
 
     let recovered = signing_key
         .verify_signature(signature, unrecoverable)
         .wrap_err("verify_signature")?;
-
-    println!("recovered: {:?}", String::from_utf8_lossy(&recovered));
 
     Ok(recovered)
 }
